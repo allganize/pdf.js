@@ -1715,6 +1715,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
         textRunBreakAllowed: false,
         transform: null,
         fontName: null,
+        colors: [],
       };
       var SPACE_FACTOR = 0.3;
       var MULTI_SPACE_FACTOR = 1.5;
@@ -1809,7 +1810,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
           textContentItem.fakeMultiSpaceMax = 0;
           textContentItem.textRunBreakAllowed = false;
         }
-
+        
         textContentItem.initialized = true;
         return textContentItem;
       }
@@ -1839,6 +1840,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
           height: textChunk.height,
           transform: textChunk.transform,
           fontName: textChunk.fontName,
+          colors: textChunk.colors,
         };
       }
 
@@ -1939,6 +1941,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
 
         textContentItem.initialized = false;
         textContentItem.str.length = 0;
+        textContentItem.colors = [];
       }
 
       function enqueueChunk() {
@@ -1948,6 +1951,22 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
           textContent.items = [];
           textContent.styles = Object.create(null);
         }
+      }
+
+      function handleRGBColor(rgb) {
+        var r = rgb[0];
+        var g = rgb[1];
+        var b = rgb[2];
+      
+        function floatToHexString(f) {
+          var i = Math.round(f * 255);
+          return i.toString(16).padStart(2, "0");
+        }
+
+        var color = "#" + floatToHexString(r) + floatToHexString(g) + floatToHexString(b);
+        
+        console.log("Color=" + color);
+        textContentItem.colors.push(color);
       }
 
       var timeSlotManager = new TimeSlotManager();
@@ -2326,6 +2345,9 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
                 next(handleSetFont(null, gStateFont[0]));
                 return;
               }
+              break;
+            case OPS.setFillRGBColor:
+              handleRGBColor(args);
               break;
           } // switch
           if (textContent.items.length >= sink.desiredSize) {
