@@ -1926,7 +1926,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
         }
       }
 
-      function flushTextContentItem() {
+      function flushTextContentItem(colors = true) {
         if (!textContentItem.initialized) {
           return;
         }
@@ -1941,7 +1941,9 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
 
         textContentItem.initialized = false;
         textContentItem.str.length = 0;
-        textContentItem.colors = [];
+        if (colors) {
+          textContentItem.colors = [];
+        }
       }
 
       function enqueueChunk() {
@@ -2179,7 +2181,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
                     }
                   }
                   if (breakTextRun) {
-                    flushTextContentItem();
+                    flushTextContentItem(false);
                   } else if (advance > 0) {
                     addFakeSpaces(advance, textContentItem.str);
                   }
