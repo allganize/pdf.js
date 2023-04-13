@@ -180,6 +180,11 @@ function incrementCachedImageMaskCount(data) {
   }
 }
 
+function floatToHexString(f) {
+  var i = Math.round(f * 255);
+  return i.toString(16).padStart(2, "0");
+}
+
 // Trying to minimize Date.now() usage and check every 100 time.
 class TimeSlotManager {
   static get TIME_SLOT_DURATION_MS() {
@@ -2299,6 +2304,7 @@ class PartialEvaluator {
       transform: null,
       fontName: null,
       hasEOL: false,
+      colors: [],
     };
 
     // Use a circular buffer (length === 2) to save the last chars in the
@@ -2505,6 +2511,7 @@ class PartialEvaluator {
         transform: textChunk.transform,
         fontName: textChunk.fontName,
         hasEOL: textChunk.hasEOL,
+        colors: textChunk.colors,
       };
     }
 
@@ -2919,6 +2926,7 @@ class PartialEvaluator {
       textContent.items.push(runBidiTransform(textContentItem));
       textContentItem.initialized = false;
       textContentItem.str.length = 0;
+      textContentItem.colors = [];
     }
 
     function enqueueChunk(batch = false) {
@@ -3320,6 +3328,14 @@ class PartialEvaluator {
                 type: "endMarkedContent",
               });
             }
+            break;
+          case OPS.setFillRGBColor:
+            const r = args[0]
+            const g = args[1]
+            const b = args[2]
+
+            const color = "#" + floatToHexString(r) + floatToHexString(g) + floatToHexString(b);
+            textContentItem.colors.push(color);
             break;
         } // switch
         if (textContent.items.length >= sink.desiredSize) {
