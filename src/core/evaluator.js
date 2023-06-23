@@ -113,6 +113,7 @@ const colorState = {
   currentColor: null,
   flushedText: false,
   isFirst: true,
+  firstColors: [],
   enqueued: false,
 }
 
@@ -2945,7 +2946,7 @@ class PartialEvaluator {
         if (!colorState.isFirst) {
           textContentItem.colors = [colorState.lastColor];
         } else {
-          textContentItem.colors = [colorState.currentColor];
+          textContentItem.colors = colorState.firstColors;
         }
         colorState.lastColor = null;
       } else {
@@ -3383,6 +3384,10 @@ class PartialEvaluator {
               } else {
                 colorState.lastColor = colorState.currentColor;
               }
+            }
+
+            if (colorState.isFirst) {
+              colorState.firstColors.push(color);
             }
             colorState.currentColor = color;
             console.log("ColorState: " + JSON.stringify(colorState));
