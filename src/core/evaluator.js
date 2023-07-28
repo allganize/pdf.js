@@ -108,6 +108,15 @@ const TEXT_CHUNK_BATCH_SIZE = 10;
 
 const deferred = Promise.resolve();
 
+const colorState = {
+  lastColor: null,
+  currentColor: null,
+  flushedText: false,
+  isFirst: true,
+  firstColors: [],
+  enqueued: false,
+}
+
 // Convert PDF blend mode names to HTML5 blend mode names.
 function normalizeBlendMode(value, parsingArray = false) {
   if (Array.isArray(value)) {
@@ -2286,6 +2295,13 @@ class PartialEvaluator {
       items: [],
       styles: Object.create(null),
     };
+
+    function itemPush(item) {
+        colorState.flushedText = true;
+        textContent.items.push(item);
+        colorState.isFirst = false;
+    }
+
     const textContentItem = {
       initialized: false,
       str: [],
@@ -2671,7 +2687,7 @@ class PartialEvaluator {
         ) {
           if (textContentItem.str.length === 0) {
             resetLastChars();
-            textContent.items.push({
+            itemPush({
               str: " ",
               dir: "ltr",
               width: 0,
@@ -2711,6 +2727,7 @@ class PartialEvaluator {
       }
 
       if (Math.abs(advanceY) > textContentItem.height) {
+
         appendEOL();
         return true;
       }
@@ -2728,7 +2745,7 @@ class PartialEvaluator {
       ) {
         if (textContentItem.str.length === 0) {
           resetLastChars();
-          textContent.items.push({
+          itemPush({
             str: " ",
             dir: "ltr",
             width: Math.abs(advanceX),
@@ -2860,7 +2877,7 @@ class PartialEvaluator {
         textContentItem.hasEOL = true;
         flushTextContentItem();
       } else {
-        textContent.items.push({
+        itemPush({
           str: "",
           dir: "ltr",
           width: 0,
@@ -2894,7 +2911,7 @@ class PartialEvaluator {
 
       flushTextContentItem();
       resetLastChars();
-      textContent.items.push({
+      itemPush({
         str: " ",
         // TODO: check if using the orientation from last chunk is
         // better or not.
@@ -2910,7 +2927,9 @@ class PartialEvaluator {
     }
 
     function flushTextContentItem() {
+
       if (!textContentItem.initialized || !textContentItem.str) {
+        colorState.flushedText = true;
         return;
       }
 
@@ -2923,7 +2942,20 @@ class PartialEvaluator {
           textContentItem.height * textContentItem.textAdvanceScale;
       }
 
-      textContent.items.push(runBidiTransform(textContentItem));
+      if (colorState.lastColor && (!colorState.flushedText || textContentItem.hasEOL)) {
+        if (!colorState.isFirst) {
+          textContentItem.colors = [colorState.lastColor];
+        } else {
+          textContentItem.colors = colorState.firstColors;
+        }
+        colorState.lastColor = null;
+      } else {
+        textContentItem.colors = [colorState.currentColor];
+      }
+
+      itemPush(runBidiTransform(textContentItem));
+      console.log("Flushed: " + JSON.stringify(textContentItem))
+
       textContentItem.initialized = false;
       textContentItem.str.length = 0;
       textContentItem.colors = [];
@@ -2937,9 +2969,15 @@ class PartialEvaluator {
       if (batch && length < TEXT_CHUNK_BATCH_SIZE) {
         return;
       }
+      console.log("Enqueue: " + JSON.stringify(textContent));
+      console.log("Enqueue(colorState): " + JSON.stringify(colorState));
       sink.enqueue(textContent, length);
       textContent.items = [];
       textContent.styles = Object.create(null);
+      if (colorState.flushedText) {
+        colorState.lastColor = null;
+        colorState.enqueued = true;
+      }
     }
 
     const timeSlotManager = new TimeSlotManager();
@@ -3043,6 +3081,8 @@ class PartialEvaluator {
             textState.textLineMatrix = IDENTITY_MATRIX.slice();
             break;
           case OPS.showSpacedText:
+            colorState.flushedText = false;
+
             if (!stateManager.state.font) {
               self.ensureStateFont(stateManager.state);
               continue;
@@ -3088,6 +3128,8 @@ class PartialEvaluator {
             }
             break;
           case OPS.showText:
+            colorState.flushedText = false;
+
             if (!stateManager.state.font) {
               self.ensureStateFont(stateManager.state);
               continue;
@@ -3299,7 +3341,7 @@ class PartialEvaluator {
           case OPS.beginMarkedContent:
             flushTextContentItem();
             if (includeMarkedContent) {
-              textContent.items.push({
+              itemPush({
                 type: "beginMarkedContent",
                 tag: args[0] instanceof Name ? args[0].name : null,
               });
@@ -3312,7 +3354,7 @@ class PartialEvaluator {
               if (args[1] instanceof Dict) {
                 mcid = args[1].get("MCID");
               }
-              textContent.items.push({
+              itemPush({
                 type: "beginMarkedContentProps",
                 id: Number.isInteger(mcid)
                   ? `${self.idFactory.getPageObjId()}_mcid${mcid}`
@@ -3324,7 +3366,7 @@ class PartialEvaluator {
           case OPS.endMarkedContent:
             flushTextContentItem();
             if (includeMarkedContent) {
-              textContent.items.push({
+              itemPush({
                 type: "endMarkedContent",
               });
             }
@@ -3335,7 +3377,20 @@ class PartialEvaluator {
             const b = args[2]
 
             const color = "#" + floatToHexString(r) + floatToHexString(g) + floatToHexString(b);
-            textContentItem.colors.push(color);
+
+            if (colorState.currentColor) {
+              if (colorState.enqueued) {
+                colorState.enqueued = false;
+              } else {
+                colorState.lastColor = colorState.currentColor;
+              }
+            }
+
+            if (colorState.isFirst) {
+              colorState.firstColors.push(color);
+            }
+            colorState.currentColor = color;
+            console.log("ColorState: " + JSON.stringify(colorState));
             break;
         } // switch
         if (textContent.items.length >= sink.desiredSize) {
