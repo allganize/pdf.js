@@ -109,6 +109,15 @@ const TEXT_CHUNK_BATCH_SIZE = 10;
 
 const deferred = Promise.resolve();
 
+const colorState = {
+  lastColor: null,
+  currentColor: null,
+  flushedText: false,
+  isFirst: true,
+  firstColors: [],
+  enqueued: false,
+}
+
 // Convert PDF blend mode names to HTML5 blend mode names.
 function normalizeBlendMode(value, parsingArray = false) {
   if (Array.isArray(value)) {
@@ -175,6 +184,11 @@ function incrementCachedImageMaskCount(data) {
   if (data.fn === OPS.paintImageMaskXObject && data.args[0]?.count > 0) {
     data.args[0].count++;
   }
+}
+
+function floatToHexString(f) {
+  var i = Math.round(f * 255);
+  return i.toString(16).padStart(2, "0");
 }
 
 // Trying to minimize Date.now() usage and check every 100 time.
@@ -2281,6 +2295,7 @@ class PartialEvaluator {
       transform: null,
       fontName: null,
       hasEOL: false,
+      colors: [],
     };
 
     // Use a circular buffer (length === 2) to save the last chars in the
@@ -2301,6 +2316,12 @@ class PartialEvaluator {
     // text chunk.
     const twoLastChars = [" ", " "];
     let twoLastCharsPos = 0;
+
+    function itemPush(item) {
+      colorState.flushedText = true;
+      colorState.isFirst = false;
+      textContent.items.push(item);
+    }
 
     /**
      * Save the last char.
@@ -2380,7 +2401,7 @@ class PartialEvaluator {
       transform = textContentItem.prevTransform,
       fontName = textContentItem.fontName,
     }) {
-      textContent.items.push({
+      itemPush({
         str: " ",
         dir: "ltr",
         width,
@@ -2515,6 +2536,7 @@ class PartialEvaluator {
         transform: textChunk.transform,
         fontName: textChunk.fontName,
         hasEOL: textChunk.hasEOL,
+        colors: textChunk.colors,
       };
     }
 
@@ -2885,7 +2907,7 @@ class PartialEvaluator {
         textContentItem.hasEOL = true;
         flushTextContentItem();
       } else {
-        textContent.items.push({
+        itemPush({
           str: "",
           dir: "ltr",
           width: 0,
@@ -2931,6 +2953,7 @@ class PartialEvaluator {
 
     function flushTextContentItem() {
       if (!textContentItem.initialized || !textContentItem.str) {
+        colorState.flushedText = true;
         return;
       }
 
@@ -2943,9 +2966,21 @@ class PartialEvaluator {
           textContentItem.height * textContentItem.textAdvanceScale;
       }
 
-      textContent.items.push(runBidiTransform(textContentItem));
+      if (colorState.lastColor && (!colorState.flushedText || textContentItem.hasEOL)) {
+        if (!colorState.isFirst) {
+          textContentItem.colors = [colorState.lastColor];
+        } else {
+          textContentItem.colors = colorState.firstColors;
+        }
+        colorState.lastColor = null;
+      } else {
+        textContentItem.colors = [colorState.currentColor];
+      }
+
+      itemPush(runBidiTransform(textContentItem));
       textContentItem.initialized = false;
       textContentItem.str.length = 0;
+      textContentItem.colors = [];
     }
 
     function enqueueChunk(batch = false) {
@@ -2959,6 +2994,11 @@ class PartialEvaluator {
       sink.enqueue(textContent, length);
       textContent.items = [];
       textContent.styles = Object.create(null);
+
+      if (colorState.flushedText) {
+        colorState.lastColor = null;
+        colorState.enqueued = true;
+      }
     }
 
     const timeSlotManager = new TimeSlotManager();
@@ -3064,6 +3104,8 @@ class PartialEvaluator {
             textState.textLineMatrix = IDENTITY_MATRIX.slice();
             break;
           case OPS.showSpacedText:
+            colorState.flushedText = false;
+
             if (!stateManager.state.font) {
               self.ensureStateFont(stateManager.state);
               continue;
@@ -3104,6 +3146,8 @@ class PartialEvaluator {
             }
             break;
           case OPS.showText:
+            colorState.flushedText = false;
+
             if (!stateManager.state.font) {
               self.ensureStateFont(stateManager.state);
               continue;
@@ -3318,7 +3362,7 @@ class PartialEvaluator {
             if (includeMarkedContent) {
               markedContentData.level++;
 
-              textContent.items.push({
+              itemPush({
                 type: "beginMarkedContent",
                 tag: args[0] instanceof Name ? args[0].name : null,
               });
@@ -3333,7 +3377,7 @@ class PartialEvaluator {
               if (args[1] instanceof Dict) {
                 mcid = args[1].get("MCID");
               }
-              textContent.items.push({
+              itemPush({
                 type: "beginMarkedContentProps",
                 id: Number.isInteger(mcid)
                   ? `${self.idFactory.getPageObjId()}_mc${mcid}`
@@ -3352,10 +3396,30 @@ class PartialEvaluator {
               }
               markedContentData.level--;
 
-              textContent.items.push({
+              itemPush({
                 type: "endMarkedContent",
               });
             }
+            break;
+          case OPS.setFillRGBColor:
+            const r = args[0];
+            const g = args[1];
+            const b = args[2];
+
+            const color = "#" + floatToHexString(r) + floatToHexString(g) + floatToHexString(b);
+            textContentItem.colors.push(color);
+
+            if (colorState.currentColor) {
+              if (colorState.enqueued) {
+                colorState.enqueued = false;
+              } else {
+                colorState.lastColor = colorState.currentColor;
+              }
+            }
+            if (colorState.isFirst) {
+              colorState.firstColors.push(color);
+            }
+            colorState.currentColor = color;
             break;
           case OPS.restore:
             if (
